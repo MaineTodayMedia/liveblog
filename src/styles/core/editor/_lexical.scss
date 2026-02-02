@@ -172,6 +172,39 @@
 	cursor: pointer;
 }
 
+.liveblog-lexical-image-caption-wrap {
+	margin-top: 4px;
+	margin-bottom: 8px;
+}
+
+.liveblog-lexical-image-caption-input {
+	width: 100%;
+	padding: 4px 8px;
+	font-size: 14px;
+	line-height: 1.4;
+	color: #666;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	background: #fff;
+
+	&::placeholder {
+		color: #999;
+	}
+
+	&:focus {
+		outline: 2px solid #007cba;
+		outline-offset: 1px;
+		border-color: #007cba;
+	}
+}
+
+.liveblog-lexical-image-caption {
+	display: block;
+	font-size: 14px;
+	line-height: 1.4;
+	color: #666;
+}
+
 // Resize handles
 .liveblog-resize-handle {
 	position: absolute;

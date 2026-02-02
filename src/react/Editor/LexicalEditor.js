@@ -21,7 +21,14 @@ import { LinkPlugin } from '@lexical/react/LexicalLinkPlugin';
 import { ListPlugin } from '@lexical/react/LexicalListPlugin';
 import { AutoFocusPlugin } from '@lexical/react/LexicalAutoFocusPlugin';
 
-import { HeadingNode, QuoteNode, $isQuoteNode, $createQuoteNode } from '@lexical/rich-text';
+import {
+	HeadingNode,
+	QuoteNode,
+	$isQuoteNode,
+	$isHeadingNode,
+	$createQuoteNode,
+	$createHeadingNode,
+} from '@lexical/rich-text';
 import { ListNode, ListItemNode } from '@lexical/list';
 import { LinkNode, AutoLinkNode, $isLinkNode, TOGGLE_LINK_COMMAND } from '@lexical/link';
 import {
@@ -74,18 +81,26 @@ const INSERT_IMAGE_COMMAND = createCommand( 'INSERT_IMAGE_COMMAND' );
  * @param {Object} props           Component props.
  * @param {string} props.src       Image source URL.
  * @param {string} props.alt       Image alt text.
+ * @param {string} props.caption   Image caption (visible below image).
  * @param {number} props.width     Image width (0 = auto).
  * @param {number} props.height    Image height (0 = auto).
  * @param {string} props.nodeKey   Lexical node key for updates.
  */
-function ResizableImage( { src, alt, width, height, nodeKey } ) {
+function ResizableImage( { src, alt, caption, width, height, nodeKey } ) {
 	const [ editor ] = useLexicalComposerContext();
 	const imageRef = useRef( null );
 	const [ isResizing, setIsResizing ] = useState( false );
 	const [ isSelected, setIsSelected ] = useState( false );
+	const [ captionValue, setCaptionValue ] = useState( caption || '' );
+	const captionInputRef = useRef( null );
 	const startSize = useRef( { width: 0, height: 0 } );
 	const startPos = useRef( { x: 0, y: 0 } );
 	const aspectRatio = useRef( 1 );
+
+	// Keep caption in sync with node (e.g. after undo or external update).
+	useEffect( () => {
+		setCaptionValue( caption || '' );
+	}, [ caption ] );
 
 	// Track selection state.
 	useEffect( () => {
@@ -125,6 +140,31 @@ function ResizableImage( { src, alt, width, height, nodeKey } ) {
 		},
 		[ editor, nodeKey ]
 	);
+
+	const setCaption = useCallback(
+		( value ) => {
+			editor.update( () => {
+				const node = $getNodeByKey( nodeKey );
+				if ( node && $isImageNode( node ) ) {
+					node.setCaption( value );
+				}
+			} );
+		},
+		[ editor, nodeKey ]
+	);
+
+	const handleCaptionChange = useCallback( ( e ) => {
+		const value = e.target.value;
+		setCaptionValue( value );
+		setCaption( value );
+	}, [ setCaption ] );
+
+	const handleCaptionKeyDown = useCallback( ( e ) => {
+		if ( e.key === 'Enter' ) {
+			e.preventDefault();
+			e.target.blur();
+		}
+	}, [] );
 
 	// Start resize on mousedown.
 	const handleResizeStart = useCallback(
@@ -203,6 +243,24 @@ function ResizableImage( { src, alt, width, height, nodeKey } ) {
 				onClick={ handleClick }
 				draggable={ false }
 			/>
+			{ ( captionValue || isSelected ) && (
+				<div className="liveblog-lexical-image-caption-wrap">
+					{ isSelected ? (
+						<input
+							ref={ captionInputRef }
+							type="text"
+							className="liveblog-lexical-image-caption-input"
+							value={ captionValue }
+							onChange={ handleCaptionChange }
+							onKeyDown={ handleCaptionKeyDown }
+							placeholder={ __( 'Add caption…', 'liveblog' ) }
+							aria-label={ __( 'Image caption', 'liveblog' ) }
+						/>
+					) : (
+						<span className="liveblog-lexical-image-caption">{ captionValue }</span>
+					) }
+				</div>
+			) }
 			{ isSelected && (
 				<>
 					<span
@@ -218,10 +276,12 @@ function ResizableImage( { src, alt, width, height, nodeKey } ) {
 /**
  * ImageNode - Custom Lexical node for displaying images.
  * Preserves all attributes from the original <img> element for flexible rendering.
+ * Supports an optional caption displayed below the image.
  */
 class ImageNode extends DecoratorNode {
 	__src;
 	__alt;
+	__caption;
 	__attributes;
 
 	static getType() {
@@ -229,15 +289,23 @@ class ImageNode extends DecoratorNode {
 	}
 
 	static clone( node ) {
-		return new ImageNode( node.__src, node.__alt, node.__attributes, node.__key );
+		const cloned = new ImageNode(
+			node.__src,
+			node.__alt,
+			{ ...node.__attributes, caption: node.__caption },
+			node.__key
+		);
+		return cloned;
 	}
 
 	constructor( src, alt = '', attributes = {}, key ) {
 		super( key );
 		this.__src = src;
 		this.__alt = alt;
-		// Store all attributes, ensuring src and alt are always present
-		this.__attributes = { ...attributes, src, alt };
+		this.__caption = attributes.caption ?? '';
+		// Store all attributes, ensuring src and alt are always present (exclude caption from img attrs)
+		const { caption, ...rest } = attributes;
+		this.__attributes = { ...rest, src, alt };
 	}
 
 	setDimensions( width, height ) {
@@ -247,6 +315,15 @@ class ImageNode extends DecoratorNode {
 			width: String( width ),
 			height: String( height ),
 		};
+	}
+
+	setCaption( caption ) {
+		const writable = this.getWritable();
+		writable.__caption = caption ?? '';
+	}
+
+	getCaption() {
+		return this.__caption ?? '';
 	}
 
 	getWidth() {
@@ -268,8 +345,8 @@ class ImageNode extends DecoratorNode {
 	}
 
 	static importJSON( serializedNode ) {
-		const { src, alt, attributes = {} } = serializedNode;
-		return $createImageNode( src, alt, attributes );
+		const { src, alt, caption, attributes = {} } = serializedNode;
+		return $createImageNode( src, alt, { ...attributes, caption } );
 	}
 
 	exportJSON() {
@@ -278,6 +355,7 @@ class ImageNode extends DecoratorNode {
 			version: 1,
 			src: this.__src,
 			alt: this.__alt,
+			caption: this.getCaption(),
 			attributes: this.__attributes,
 		};
 	}
@@ -288,17 +366,30 @@ class ImageNode extends DecoratorNode {
 				conversion: convertImageElement,
 				priority: 0,
 			} ),
+			figure: () => ( {
+				conversion: convertFigureElement,
+				priority: 1,
+			} ),
 		};
 	}
 
 	exportDOM() {
 		const img = document.createElement( 'img' );
-		// Export all stored attributes
 		Object.entries( this.__attributes ).forEach( ( [ key, value ] ) => {
 			if ( value !== null && value !== undefined && value !== '' ) {
 				img.setAttribute( key, value );
 			}
 		} );
+		const captionText = this.getCaption();
+		if ( captionText ) {
+			const figure = document.createElement( 'figure' );
+			figure.className = 'liveblog-lexical-image-wrapper';
+			figure.appendChild( img );
+			const figcaption = document.createElement( 'figcaption' );
+			figcaption.textContent = captionText;
+			figure.appendChild( figcaption );
+			return { element: figure };
+		}
 		return { element: img };
 	}
 
@@ -307,6 +398,7 @@ class ImageNode extends DecoratorNode {
 			<ResizableImage
 				src={ this.__src }
 				alt={ this.__alt }
+				caption={ this.getCaption() }
 				width={ this.getWidth() }
 				height={ this.getHeight() }
 				nodeKey={ this.getKey() }
@@ -317,15 +409,35 @@ class ImageNode extends DecoratorNode {
 
 function convertImageElement( domNode ) {
 	if ( domNode instanceof HTMLImageElement ) {
+		// If img is inside a figure, let convertFigureElement handle it to avoid duplicate nodes.
+		if ( domNode.parentElement?.tagName === 'FIGURE' ) {
+			return null;
+		}
 		const src = domNode.getAttribute( 'src' );
 		if ( src ) {
-			// Collect all attributes from the original element
 			const attributes = {};
 			for ( const attr of domNode.attributes ) {
 				attributes[ attr.name ] = attr.value;
 			}
 			const alt = attributes.alt || '';
 			return { node: $createImageNode( src, alt, attributes ) };
+		}
+	}
+	return null;
+}
+
+function convertFigureElement( domNode ) {
+	if ( domNode instanceof HTMLElement && domNode.tagName === 'FIGURE' ) {
+		const img = domNode.querySelector( 'img' );
+		const figcap = domNode.querySelector( 'figcaption' );
+		if ( img && img.getAttribute( 'src' ) ) {
+			const attributes = {};
+			for ( const attr of img.attributes ) {
+				attributes[ attr.name ] = attr.value;
+			}
+			const alt = attributes.alt || '';
+			const caption = figcap ? figcap.textContent.trim() : '';
+			return { node: $createImageNode( img.getAttribute( 'src' ), alt, { ...attributes, caption } ) };
 		}
 	}
 	return null;
@@ -444,6 +556,8 @@ function cleanLexicalHtml( html ) {
 
 	// Clean up image wrapper spans
 	cleaned = cleaned.replace( /<span class="liveblog-lexical-image-wrapper">(<img[^>]*>)<\/span>/g, '$1' );
+	// Remove class from figure (caption wrapper) so stored HTML is minimal
+	cleaned = cleaned.replace( /<figure class="liveblog-lexical-image-wrapper">/g, '<figure>' );
 
 	return cleaned;
 }
@@ -1000,6 +1114,7 @@ function getSelectionState( editor ) {
 		isLink: false,
 		isQuote: false,
 		listType: null,
+		blockType: 'paragraph',
 	};
 
 	editor.getEditorState().read( () => {
@@ -1016,6 +1131,14 @@ function getSelectionState( editor ) {
 		const element = anchorNode.getKey() === 'root'
 			? anchorNode
 			: anchorNode.getTopLevelElementOrThrow();
+
+		// Check for heading
+		if ( $isHeadingNode( element ) ) {
+			const tag = element.getTag();
+			if ( [ 'h1', 'h2', 'h3' ].includes( tag ) ) {
+				state.blockType = tag;
+			}
+		}
 
 		// Check for quote
 		if ( $isQuoteNode( element ) ) {
@@ -1056,6 +1179,7 @@ function ToolbarPlugin( { readOnly, handleImageUpload } ) {
 		isLink: false,
 		isQuote: false,
 		listType: null,
+		blockType: 'paragraph',
 	} );
 	const [ showLinkInput, setShowLinkInput ] = useState( false );
 	const [ linkUrl, setLinkUrl ] = useState( 'https://' );
@@ -1120,6 +1244,23 @@ function ToolbarPlugin( { readOnly, handleImageUpload } ) {
 			}
 		} );
 	}, [ editor, selectionState.isQuote ] );
+
+	const formatBlockType = useCallback( ( blockType ) => {
+		editor.update( () => {
+			const selection = $getSelection();
+			if ( ! $isRangeSelection( selection ) ) {
+				return;
+			}
+
+			if ( blockType === 'paragraph' ) {
+				$setBlocksType( selection, () => $createParagraphNode() );
+			} else if ( blockType === 'quote' ) {
+				$setBlocksType( selection, () => $createQuoteNode() );
+			} else if ( [ 'h1', 'h2', 'h3' ].includes( blockType ) ) {
+				$setBlocksType( selection, () => $createHeadingNode( blockType ) );
+			}
+		} );
+	}, [ editor ] );
 
 	const openLinkModal = useCallback( () => {
 		editor.getEditorState().read( () => {
@@ -1209,6 +1350,22 @@ function ToolbarPlugin( { readOnly, handleImageUpload } ) {
 	return (
 		<div className="liveblog-editor-toolbar-container">
 			<div className="liveblog-toolbar">
+				<select
+					className="liveblog-editor-block-format"
+					value={
+						selectionState.isQuote
+							? 'quote'
+							: selectionState.blockType
+					}
+					onChange={ ( e ) => formatBlockType( e.target.value ) }
+					disabled={ readOnly }
+					title={ __( 'Block format', 'liveblog' ) }
+					aria-label={ __( 'Block format', 'liveblog' ) }
+				>
+					<option value="paragraph">{ __( 'Paragraph', 'liveblog' ) }</option>
+					<option value="h3">{ __( 'Title', 'liveblog' ) }</option>
+					<option value="quote">{ __( 'Quote', 'liveblog' ) }</option>
+				</select>
 				<ToolbarButton
 					onClick={ formatBold }
 					icon="editor-bold"
@@ -1385,6 +1542,5 @@ LexicalEditor.propTypes = {
 	handleImageUpload: PropTypes.func,
 	suggestions: PropTypes.array,
 	onSearch: PropTypes.func,
-};
-
+}
 export default LexicalEditor;

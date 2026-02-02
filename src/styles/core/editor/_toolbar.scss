@@ -1,10 +1,36 @@
 @use "../utils" as *;
 
 .liveblog-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0;
 	background: $color-grey-x-light;
 	border: $base-border-size solid $color-grey-light;
 	border-bottom: none;
 	line-height: 0;
+}
+
+.liveblog-editor-block-format {
+	margin: 0.25rem 0.25rem 0.25rem 0.5rem;
+	padding: 0.35rem 0.5rem;
+	font-size: 0.875rem;
+	line-height: 1.25;
+	border: $base-border-size solid $color-grey-light;
+	border-radius: $base-border-radius;
+	background: #fff;
+	color: $color-grey-dark;
+	cursor: pointer;
+}
+
+.liveblog-editor-block-format:focus {
+	outline: 2px solid $color-primary;
+	outline-offset: 1px;
+}
+
+.liveblog-editor-block-format[disabled] {
+	opacity: 0.5;
+	cursor: auto;
 }
 
 @include mq($until: small) {
